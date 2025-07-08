@@ -4,9 +4,47 @@ __pycache__/
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
+*.so
+.coverage
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Virtual environments
-.venv
+.venv/
+venv/
+env/
+ENV/
 
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
 **/.DS_Store
+.DS_Store
+Thumbs.db
+
+# Jupyter files
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# uv lock file conflicts
+uv.lock.bak
+
+# Hydra
+.hydra/
+outputs/
+multirun/
+
+# Wandb
+wandb/

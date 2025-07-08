@@ -24,11 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "jupyter>=1.0.0",
-    "ipykernel>=6.25.0",
-    "pre-commit>=3.4.0",
-]
+dev = ["jupyter>=1.0.0", "ipykernel>=6.25.0", "pre-commit>=3.4.0"]
 
 [build-system]
 requires = ["hatchling"]
@@ -47,3 +43,42 @@ python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+include = ["binax/**/*.py"]
+exclude = ["**/examples", "**/tests"]
+
+[tool.ruff.lint.pycodestyle]
+max-line-length = 120
+
+[tool.ruff.lint]
+ignore = ["N803", "N806", "N815"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-sort-within-sections = false
+split-on-trailing-comma = true
+lines-between-types = 0
+lines-after-imports = 2
+order-by-type = true
+no-lines-before = ["first-party"]
+known-third-party = [
+    "jax",
+    "flax",
+    "optax",
+    "chex",
+    "hydra",
+    "wandb",
+    "numpy",
+    "matplotlib",
+    "seaborn",
+    "tqdm",
+    "pytest",
+    "black",
+    "isort",
+    "mypy",
+    "jupyter",
+]
+known-first-party = ["binax"]

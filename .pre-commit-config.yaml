@@ -1,0 +1,56 @@
+# See https://pre-commit.com for more information
+repos:
+  # General hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+
+  # Python formatting and linting with Ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.2
+    hooks:
+      # Linter
+      - id: ruff
+        exclude: (\.ipynb$|__init__\.py$)
+        args: [
+            "--fix",
+            "--unsafe-fixes",
+            "--exit-non-zero-on-fix",
+            "--target-version=py310",
+            "--line-length=120",
+            "--ignore=N803,N806,N815",
+        ]
+
+      # Formatter
+      - id: ruff-format
+
+  # Remove notebook outputs
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.1
+    hooks:
+      - id: nbstripout
+
+# Global settings
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+# CI settings
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

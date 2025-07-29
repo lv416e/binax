@@ -106,9 +106,7 @@ class Trainer:
             "max_items": config.max_items,
             "item_size_range": config.item_size_range,
         }
-        self.reset_fn, self.step_fn, self.get_valid_actions_fn = make_vectorized_env(
-            env_params, config.num_envs
-        )
+        self.reset_fn, self.step_fn, self.get_valid_actions_fn = make_vectorized_env(env_params, config.num_envs)
 
         # Setup network
         self.network = create_network(
@@ -155,9 +153,7 @@ class Trainer:
                 config=vars(config),
             )
 
-    def collect_rollout(
-        self, states: BinPackingState
-    ) -> tuple[RolloutBatch, BinPackingState]:
+    def collect_rollout(self, states: BinPackingState) -> tuple[RolloutBatch, BinPackingState]:
         """Collect rollout data from vectorized environments.
 
         Args:
@@ -186,19 +182,13 @@ class Trainer:
 
             # Vectorized action selection
             def select_action_single(state, valid_action_mask, key):
-                return self.agent.select_action(
-                    self.params, state, key, valid_action_mask
-                )
+                return self.agent.select_action(self.params, state, key, valid_action_mask)
 
-            actions, log_probs, values = jax.vmap(select_action_single)(
-                current_states, valid_actions, action_keys
-            )
+            actions, log_probs, values = jax.vmap(select_action_single)(current_states, valid_actions, action_keys)
 
             # Step environments
             self.key, step_key = random.split(self.key)
-            next_states, rewards, dones = self.step_fn(
-                current_states, actions, step_key
-            )
+            next_states, rewards, dones = self.step_fn(current_states, actions, step_key)
 
             # Store transition data
             state_history.append(current_states)
@@ -211,11 +201,15 @@ class Trainer:
             # Reset done environments
             self.key, reset_key = random.split(self.key)
             reset_states = self.reset_fn(reset_key)
-            current_states = jax.tree_map(
-                lambda new, old, done: jnp.where(done[:, None], new, old),
-                reset_states,
-                next_states,
-                dones,
+
+            # Manual state reset to avoid tree_map issues
+            current_states = BinPackingState(
+                bin_capacities=jnp.where(dones[:, None], reset_states.bin_capacities, next_states.bin_capacities),
+                bin_utilization=jnp.where(dones[:, None], reset_states.bin_utilization, next_states.bin_utilization),
+                item_queue=jnp.where(dones[:, None], reset_states.item_queue, next_states.item_queue),
+                current_item_idx=jnp.where(dones, reset_states.current_item_idx, next_states.current_item_idx),
+                step_count=jnp.where(dones, reset_states.step_count, next_states.step_count),
+                done=jnp.where(dones, reset_states.done, next_states.done),
             )
 
             self.timestep += self.config.num_envs
@@ -225,15 +219,11 @@ class Trainer:
         self.key, *final_keys = random.split(self.key, self.config.num_envs + 1)
         final_keys = jnp.array(final_keys)
 
-        _, _, next_values = jax.vmap(select_action_single)(
-            current_states, valid_actions_final, final_keys
-        )
+        _, _, next_values = jax.vmap(select_action_single)(current_states, valid_actions_final, final_keys)
 
         # Stack rollout data
-        states = jax.tree_map(lambda *args: jnp.stack(args), *state_history)
-        actions = BinPackingAction(
-            bin_idx=jnp.stack([a.bin_idx for a in action_history])
-        )
+        states = jax.tree.map(lambda *args: jnp.stack(args), *state_history)
+        actions = BinPackingAction(bin_idx=jnp.stack([a.bin_idx for a in action_history]))
         rewards = jnp.stack(reward_history)
         values = jnp.stack(value_history)
         log_probs = jnp.stack(log_prob_history)
@@ -241,21 +231,15 @@ class Trainer:
 
         # Compute advantages and returns using GAE
         def compute_gae_single(rewards_seq, values_seq, dones_seq, next_value):
-            return self.agent.compute_gae(
-                rewards_seq, values_seq, dones_seq, next_value
-            )
+            return self.agent.compute_gae(rewards_seq, values_seq, dones_seq, next_value)
 
-        advantages, returns = jax.vmap(compute_gae_single, in_axes=(1, 1, 1, 0))(
-            rewards, values, dones, next_values
-        )
+        advantages, returns = jax.vmap(compute_gae_single, in_axes=(1, 1, 1, 0))(rewards, values, dones, next_values)
         advantages = advantages.T
         returns = returns.T
 
         # Flatten batch dimensions
         batch_size = self.config.rollout_length * self.config.num_envs
-        states_flat = jax.tree_map(
-            lambda x: x.reshape(batch_size, *x.shape[2:]), states
-        )
+        states_flat = jax.tree.map(lambda x: x.reshape(batch_size, *x.shape[2:]), states)
         actions_flat = BinPackingAction(bin_idx=actions.bin_idx.reshape(batch_size))
         rewards_flat = rewards.reshape(batch_size)
         values_flat = values.reshape(batch_size)
@@ -308,9 +292,7 @@ class Trainer:
                 valid_actions = env.get_valid_actions(state)
 
                 self.key, action_key = random.split(self.key)
-                action, _, _ = self.agent.select_action(
-                    self.params, state, action_key, valid_actions
-                )
+                action, _, _ = self.agent.select_action(self.params, state, action_key, valid_actions)
 
                 state, reward, done = env.step(state, action, action_key)
                 episode_reward += reward
@@ -354,15 +336,7 @@ class Trainer:
                 pbar.update(self.config.rollout_length * self.config.num_envs)
 
                 # Logging
-                if (
-                    self.timestep
-                    % (
-                        self.config.log_interval
-                        * self.config.rollout_length
-                        * self.config.num_envs
-                    )
-                    == 0
-                ):
+                if self.timestep % (self.config.log_interval * self.config.rollout_length * self.config.num_envs) == 0:
                     fps = self.timestep / (time.time() - start_time)
 
                     log_data = {
@@ -392,15 +366,7 @@ class Trainer:
                     )
 
                 # Evaluation
-                if (
-                    self.timestep
-                    % (
-                        self.config.eval_interval
-                        * self.config.rollout_length
-                        * self.config.num_envs
-                    )
-                    == 0
-                ):
+                if self.timestep % (self.config.eval_interval * self.config.rollout_length * self.config.num_envs) == 0:
                     eval_metrics = self.evaluate()
 
                     if self.config.use_wandb:

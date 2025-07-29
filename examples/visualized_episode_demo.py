@@ -1,17 +1,20 @@
 """Demo script showing enhanced episode visualization capabilities."""
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 from binax.environment import BinPackingEnv
-from binax.algorithms import PPO
-from binax.networks import SimpleNetwork
+from binax.algorithms import PPOAgent, PPOConfig
+from binax.networks import SimplePolicyValueNetwork
+from binax.types import BinPackingAction
 from binax.visualizer import EpisodeVisualizer
 import matplotlib.pyplot as plt
 
 
 def run_visualized_episode(
     env: BinPackingEnv,
-    agent: PPO,
+    agent: PPOAgent,
+    network_params,
     visualizer: EpisodeVisualizer,
     seed: int = 0
 ):
@@ -29,23 +32,30 @@ def run_visualized_episode(
     while not state.done:
         key, action_key = jax.random.split(key)
 
+        # Get valid actions
+        valid_actions = env.get_valid_actions(state)
+
         # Get action from agent with probabilities
-        action_logits = agent.network.apply(
-            agent.network_params, state, method=agent.network.policy
+        network_output = agent.network.apply(network_params, state, training=False)
+
+        # Mask invalid actions
+        masked_logits = jnp.where(
+            valid_actions,
+            network_output.action_logits,
+            -1e9,
         )
-        action_probs = jax.nn.softmax(action_logits)
+        action_probs = jax.nn.softmax(masked_logits)
 
         # Sample action
-        action_idx = jax.random.categorical(action_key, action_logits)
-        action = env.idx_to_action(action_idx, state)
+        action_idx = jax.random.categorical(action_key, masked_logits)
+        action = BinPackingAction(bin_idx=action_idx)
 
         # Get value estimate
-        value = agent.network.apply(
-            agent.network_params, state, method=agent.network.value
-        )
+        value = network_output.value
 
         # Step environment
-        next_state, reward = env.step(state, action)
+        key, step_key = jax.random.split(key)
+        next_state, reward, _ = env.step(state, action, step_key)
 
         # Record step for visualization
         visualizer.record_step(
@@ -61,8 +71,10 @@ def run_visualized_episode(
         state = next_state
 
         # Print step info
-        print(f"Step {step_count}: Item {state.item_queue[state.current_item_idx-1]:.3f} "
-              f"→ Bin {action.bin_index} (prob: {action_probs[action_idx]:.2f}), "
+        current_item = float(state.item_queue[state.current_item_idx])
+        prob = float(action_probs[action_idx])
+        print(f"Step {step_count}: Item {current_item:.3f} "
+              f"→ Bin {action.bin_idx} (prob: {prob:.2f}), "
               f"Reward: {reward:.3f}")
 
     print(f"\nEpisode completed in {step_count} steps with total reward: {total_reward:.3f}")
@@ -72,34 +84,35 @@ def run_visualized_episode(
 def main():
     # Initialize environment
     env_params = {
-        "num_items": 20,
-        "item_dist": "uniform",
-        "item_sizes": (0.1, 0.5),
         "bin_capacity": 1.0,
-        "reward_type": "utilization",
+        "max_bins": 50,
+        "max_items": 20,
+        "item_size_range": (0.1, 0.5),
     }
     env = BinPackingEnv(**env_params)
 
     # Initialize agent
-    network = SimpleNetwork(
-        hidden_dim=64,
-        num_layers=2,
+    network = SimplePolicyValueNetwork(
+        hidden_dims=[64, 64],
         max_bins=env.max_bins,
     )
 
-    agent = PPO(
-        network=network,
+    config = PPOConfig(
         learning_rate=3e-4,
-        clip_epsilon=0.2,
-        value_coef=0.5,
-        entropy_coef=0.01,
+        clip_eps=0.2,
+        value_loss_coeff=0.5,
+        entropy_coeff=0.01,
+    )
+
+    agent = PPOAgent(
+        network=network,
+        config=config,
     )
 
     # Initialize network parameters
     key = jax.random.PRNGKey(42)
     dummy_state = env.reset(key)
-    network_params = network.init(key, dummy_state)
-    agent.network_params = network_params
+    network_params = agent.init_params(key, dummy_state)
 
     # Create visualizer
     visualizer = EpisodeVisualizer(
@@ -109,7 +122,7 @@ def main():
 
     # Run episode with visualization
     print("Running episode with visualization...\n")
-    run_visualized_episode(env, agent, visualizer, seed=42)
+    run_visualized_episode(env, agent, network_params, visualizer, seed=42)
 
     # Create visualizations
     print("\nGenerating episode visualizations...")

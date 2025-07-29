@@ -39,7 +39,7 @@ class EpisodeVisualizer:
     ):
         """Record a single step for visualization."""
         item_size = float(state.item_queue[state.current_item_idx])
-        bin_selected = int(action.bin_index)
+        bin_selected = int(action.bin_idx)
 
         self.episode_history.append(
             EpisodeStep(

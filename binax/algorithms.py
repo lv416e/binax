@@ -67,9 +67,7 @@ class PPOAgent:
             optax.adam(config.learning_rate),
         )
 
-    def init_params(
-        self, key: chex.PRNGKey, dummy_state: BinPackingState
-    ) -> chex.ArrayTree:
+    def init_params(self, key: chex.PRNGKey, dummy_state: BinPackingState) -> chex.ArrayTree:
         """Initialize network parameters."""
         return self.network.init(key, dummy_state, training=False)
 
@@ -186,19 +184,14 @@ class PPOAgent:
         def loss_fn(params):
             # Forward pass
             def network_forward(state):
-                return self.network.apply(
-                    params, state, training=True, rngs={"dropout": key}
-                )
+                return self.network.apply(params, state, training=True, rngs={"dropout": key})
 
             network_outputs = jax.vmap(network_forward)(batch.states)
 
             # Policy loss
             action_logits = network_outputs.action_logits
             action_probs = jax.nn.softmax(action_logits)
-            new_log_probs = jnp.log(
-                action_probs[jnp.arange(len(batch.actions)), batch.actions.bin_idx]
-                + 1e-8
-            )
+            new_log_probs = jnp.log(action_probs[jnp.arange(len(batch.actions)), batch.actions.bin_idx] + 1e-8)
 
             # Importance sampling ratio
             ratio = jnp.exp(new_log_probs - batch.log_probs)
@@ -206,23 +199,16 @@ class PPOAgent:
             # Normalize advantages
             advantages = batch.advantages
             if self.config.normalize_advantages:
-                advantages = (advantages - jnp.mean(advantages)) / (
-                    jnp.std(advantages) + 1e-8
-                )
+                advantages = (advantages - jnp.mean(advantages)) / (jnp.std(advantages) + 1e-8)
 
             # Clipped surrogate loss
             surr1 = ratio * advantages
-            surr2 = (
-                jnp.clip(ratio, 1 - self.config.clip_eps, 1 + self.config.clip_eps)
-                * advantages
-            )
+            surr2 = jnp.clip(ratio, 1 - self.config.clip_eps, 1 + self.config.clip_eps) * advantages
             policy_loss = -jnp.mean(jnp.minimum(surr1, surr2))
 
             # Value loss
             values = network_outputs.value
-            value_clipped = batch.values + jnp.clip(
-                values - batch.values, -self.config.clip_eps, self.config.clip_eps
-            )
+            value_clipped = batch.values + jnp.clip(values - batch.values, -self.config.clip_eps, self.config.clip_eps)
             value_loss1 = (values - batch.returns) ** 2
             value_loss2 = (value_clipped - batch.returns) ** 2
             value_loss = 0.5 * jnp.mean(jnp.maximum(value_loss1, value_loss2))
@@ -233,16 +219,12 @@ class PPOAgent:
 
             # Total loss
             total_loss = (
-                policy_loss
-                + self.config.value_loss_coeff * value_loss
-                + self.config.entropy_coeff * entropy_loss
+                policy_loss + self.config.value_loss_coeff * value_loss + self.config.entropy_coeff * entropy_loss
             )
 
             # Metrics
             kl_div = jnp.mean(batch.log_probs - new_log_probs)
-            clip_frac = jnp.mean(
-                (jnp.abs(ratio - 1) > self.config.clip_eps).astype(jnp.float32)
-            )
+            clip_frac = jnp.mean((jnp.abs(ratio - 1) > self.config.clip_eps).astype(jnp.float32))
             explained_var = 1 - jnp.var(batch.returns - values) / jnp.var(batch.returns)
 
             metrics = TrainingMetrics(
@@ -303,12 +285,8 @@ class PPOAgent:
 
                 # Extract minibatch
                 minibatch = RolloutBatch(
-                    states=jax.tree_map(
-                        lambda x: x[batch_indices], rollout_batch.states
-                    ),
-                    actions=BinPackingAction(
-                        bin_idx=rollout_batch.actions.bin_idx[batch_indices]
-                    ),
+                    states=jax.tree.map(lambda x: x[batch_indices], rollout_batch.states),
+                    actions=BinPackingAction(bin_idx=rollout_batch.actions.bin_idx[batch_indices]),
                     rewards=rollout_batch.rewards[batch_indices],
                     values=rollout_batch.values[batch_indices],
                     log_probs=rollout_batch.log_probs[batch_indices],
@@ -318,12 +296,10 @@ class PPOAgent:
                 )
 
                 # Update on minibatch
-                new_params, new_opt_state, metrics = self.update_step(
-                    params, opt_state, minibatch, update_key
-                )
+                new_params, new_opt_state, metrics = self.update_step(params, opt_state, minibatch, update_key)
 
                 # Accumulate metrics
-                new_metrics_sum = jax.tree_map(lambda x, y: x + y, metrics_sum, metrics)
+                new_metrics_sum = jax.tree.map(lambda x, y: x + y, metrics_sum, metrics)
 
                 return (new_params, new_opt_state, new_metrics_sum), None
 
@@ -345,9 +321,7 @@ class PPOAgent:
             )
 
             # Average metrics
-            avg_metrics = jax.tree_map(
-                lambda x: x / self.config.num_minibatches, metrics_sum
-            )
+            avg_metrics = jax.tree.map(lambda x: x / self.config.num_minibatches, metrics_sum)
 
             return (params, opt_state), avg_metrics
 
@@ -361,7 +335,7 @@ class PPOAgent:
         )
 
         # Average metrics across epochs
-        final_metrics = jax.tree_map(lambda x: jnp.mean(x), epoch_metrics)
+        final_metrics = jax.tree.map(lambda x: jnp.mean(x), epoch_metrics)
 
         return final_params, final_opt_state, final_metrics
 

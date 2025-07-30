@@ -49,3 +49,6 @@ multirun/
 
 # Wandb
 wandb/
+
+# Serena (AI assistant temporary files)
+.serena/

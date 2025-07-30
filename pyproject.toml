@@ -50,7 +50,7 @@ check_untyped_defs = false
 strict_optional = false
 
 [[tool.mypy.overrides]]
-module = ["binax.environment", "binax.environment_improved", "binax.networks", "binax.visualizer", "binax.interactive_viz", "binax.algorithms", "binax.trainer"]
+module = ["binax.environment", "binax.networks", "binax.visualizer", "binax.interactive_viz", "binax.algorithms", "binax.trainer"]
 ignore_errors = true
 
 [tool.pytest.ini_options]

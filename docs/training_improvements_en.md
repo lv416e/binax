@@ -133,12 +133,13 @@ def select_action_with_exploration(self, ...):
 
 ### 🎨 Long-term Improvements
 
-#### 1. Improved Environment (Using environment_improved.py)
-Use the already implemented improved version:
+#### 1. Improved Environment (Using Enhanced Reward Function)
+The improved reward function is already integrated into the main environment:
 ```python
-from binax.environment_improved import compute_improved_reward
+from binax.environment import BinPackingEnv
 
-# Replace compute_reward in environment.py
+# The environment now uses the balanced reward function by default
+env = BinPackingEnv()
 ```
 
 #### 2. Utilizing Heuristics

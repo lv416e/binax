@@ -133,12 +133,13 @@ def select_action_with_exploration(self, ...):
 
 ### 🎨 長期的改善
 
-#### 1. 改善された環境（environment_improved.py を活用）
-すでに実装されている改善版を使用：
+#### 1. 改善された環境（強化された報酬関数を使用）
+改善された報酬関数はすでにメイン環境に統合されています：
 ```python
-from binax.environment_improved import compute_improved_reward
+from binax.environment import BinPackingEnv
 
-# environment.py の compute_reward を置き換え
+# 環境はデフォルトでバランス調整された報酬関数を使用
+env = BinPackingEnv()
 ```
 
 #### 2. ヒューリスティックの活用

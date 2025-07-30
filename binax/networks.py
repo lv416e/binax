@@ -112,15 +112,11 @@ class BinItemEncoder(nn.Module):
 
         # Add positional encoding for bins
         bin_positions = jnp.arange(bin_features.shape[0])[:, None]
-        bin_pos_embeddings = self.position_embedding(
-            nn.one_hot(bin_positions, num_classes=50)
-        )
+        bin_pos_embeddings = self.position_embedding(nn.one_hot(bin_positions, num_classes=50))
         bin_embeddings = bin_embeddings + bin_pos_embeddings
 
         # Encode current item
-        current_item_size = state.item_queue[
-            state.current_item_idx : state.current_item_idx + 1
-        ]
+        current_item_size = state.item_queue[state.current_item_idx : state.current_item_idx + 1]
         item_embedding = self.item_embedding(current_item_size[:, None])
 
         # Concatenate bin and item embeddings

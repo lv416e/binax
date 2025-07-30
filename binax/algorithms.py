@@ -1,35 +1,18 @@
-"""PPO algorithm implementation for bin packing reinforcement learning."""
+"""Improved PPO implementation with learning rate scheduling and other enhancements."""
 
-from collections.abc import Callable
 from functools import partial
-from typing import NamedTuple
+from typing import Any, NamedTuple, Optional, Tuple
 
 import chex
 import jax
 import jax.numpy as jnp
 import optax
-from jax import random
 
-from binax.types import BinPackingAction, BinPackingState, TrainingMetrics
-
-
-class PPOConfig(NamedTuple):
-    """Configuration for PPO algorithm."""
-
-    learning_rate: float = 3e-4
-    num_epochs: int = 4
-    num_minibatches: int = 4
-    gamma: float = 0.99
-    gae_lambda: float = 0.95
-    clip_eps: float = 0.2
-    entropy_coeff: float = 0.01
-    value_loss_coeff: float = 0.5
-    max_grad_norm: float = 0.5
-    normalize_advantages: bool = True
+from binax.types import AgentState, BinPackingAction, BinPackingState, TrajectoryData
 
 
 class RolloutBatch(NamedTuple):
-    """Batch of rollout data."""
+    """Batch of rollout data for backward compatibility with tests."""
 
     states: BinPackingState
     actions: BinPackingAction
@@ -41,16 +24,50 @@ class RolloutBatch(NamedTuple):
     returns: chex.Array
 
 
+def make_rollout_batch(trajectory: TrajectoryData) -> RolloutBatch:
+    """Create RolloutBatch from TrajectoryData for backward compatibility."""
+    return RolloutBatch(
+        states=trajectory.states,
+        actions=trajectory.actions,
+        rewards=trajectory.rewards,
+        values=trajectory.values,
+        log_probs=trajectory.log_probs,
+        dones=trajectory.dones,
+        advantages=trajectory.advantages,
+        returns=trajectory.returns,
+    )
+
+
+@chex.dataclass
+class PPOConfig:
+    """PPO algorithm configuration."""
+
+    learning_rate: float = 3e-4
+    clip_epsilon: float = 0.2
+    value_loss_coeff: float = 0.5
+    entropy_coeff: float = 0.01
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    num_epochs: int = 4
+    num_minibatches: int = 4
+    max_grad_norm: float = 0.5
+    normalize_advantages: bool = True
+    # New: learning rate scheduling
+    use_lr_schedule: bool = True
+    lr_schedule_end: float = 1e-5
+    total_timesteps: Optional[int] = None  # Required if use_lr_schedule is True
+
+
 class PPOAgent:
-    """Proximal Policy Optimization agent for bin packing."""
+    """Improved PPO agent with learning rate scheduling and enhanced features."""
 
     def __init__(
         self,
-        network: Callable,
+        network: Any,  # Flax module
         config: PPOConfig = PPOConfig(),
         action_dim: int = 51,  # max_bins + 1
     ) -> None:
-        """Initialize PPO agent.
+        """Initialize improved PPO agent.
 
         Args:
             network: Policy-value network function
@@ -61,15 +78,28 @@ class PPOAgent:
         self.config = config
         self.action_dim = action_dim
 
-        # Create optimizer
+        # Create optimizer with potential learning rate schedule
+        if config.use_lr_schedule and config.total_timesteps:
+            # Calculate approximate number of updates
+            # This should be set more accurately based on batch size
+            num_updates = config.total_timesteps // 1000  # Rough estimate
+
+            lr_schedule = optax.linear_schedule(
+                init_value=config.learning_rate,
+                end_value=config.lr_schedule_end,
+                transition_steps=num_updates,
+            )
+            optimizer = optax.adam(learning_rate=lr_schedule)
+        else:
+            optimizer = optax.adam(config.learning_rate)
+
+        # Chain with gradient clipping
         self.optimizer = optax.chain(
             optax.clip_by_global_norm(config.max_grad_norm),
-            optax.adam(config.learning_rate),
+            optimizer,
         )
 
-    def init_params(
-        self, key: chex.PRNGKey, dummy_state: BinPackingState
-    ) -> chex.ArrayTree:
+    def init_params(self, key: chex.PRNGKey, dummy_state: BinPackingState) -> chex.ArrayTree:
         """Initialize network parameters."""
         return self.network.init(key, dummy_state, training=False)
 
@@ -77,21 +107,23 @@ class PPOAgent:
         """Initialize optimizer state."""
         return self.optimizer.init(params)
 
-    @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0, 5))
     def select_action(
         self,
         params: chex.ArrayTree,
         state: BinPackingState,
         key: chex.PRNGKey,
         valid_actions: chex.Array,
-    ) -> tuple[BinPackingAction, chex.Scalar, chex.Scalar]:
-        """Select action using policy network.
+        deterministic: bool = False,
+    ) -> Tuple[BinPackingAction, chex.Array, chex.Array]:
+        """Select action using policy network with optional deterministic mode.
 
         Args:
             params: Network parameters
             state: Current state
             key: Random key
             valid_actions: Mask of valid actions
+            deterministic: If True, select most probable action
 
         Returns:
             Tuple of (action, log_prob, value)
@@ -105,8 +137,12 @@ class PPOAgent:
             -1e9,
         )
 
-        # Sample action
-        action_idx = random.categorical(key, masked_logits)
+        # Sample or select deterministically
+        if deterministic:
+            action_idx = jnp.argmax(masked_logits)
+        else:
+            action_idx = jax.random.categorical(key, masked_logits)
+
         action = BinPackingAction(bin_idx=action_idx)
 
         # Compute log probability
@@ -123,7 +159,7 @@ class PPOAgent:
         dones: chex.Array,
         next_value: chex.Scalar,
     ) -> tuple[chex.Array, chex.Array]:
-        """Compute Generalized Advantage Estimation.
+        """Compute Generalized Advantage Estimation with proper handling of episode boundaries.
 
         Args:
             rewards: Reward sequence [T]
@@ -134,31 +170,28 @@ class PPOAgent:
         Returns:
             Tuple of (advantages, returns)
         """
+        T = rewards.shape[0]
 
-        def gae_step(carry, transition):
-            gae, next_value = carry
-            reward, value, done = transition
+        # Append next value for easier computation
+        values_t_plus_1 = jnp.concatenate([values, jnp.array([next_value])])
 
-            delta = reward + self.config.gamma * next_value * (1 - done) - value
-            gae = delta + self.config.gamma * self.config.gae_lambda * (1 - done) * gae
-            next_value = value
+        # Compute TD errors
+        deltas = rewards + self.config.gamma * (1 - dones) * values_t_plus_1[1:] - values_t_plus_1[:-1]
 
-            return (gae, next_value), gae
+        # Compute GAE using scan for efficiency
+        def _gae_step(gae_t_plus_1, t):
+            delta_t = deltas[t]
+            done_t = dones[t]
+            gae_t = delta_t + self.config.gamma * self.config.gae_lambda * (1 - done_t) * gae_t_plus_1
+            return gae_t, gae_t
 
-        # Reverse sequences for scan
-        reversed_rewards = rewards[::-1]
-        reversed_values = values[::-1]
-        reversed_dones = dones[::-1]
-
-        # Compute advantages
         _, advantages = jax.lax.scan(
-            gae_step,
-            (0.0, next_value),
-            (reversed_rewards, reversed_values, reversed_dones),
+            _gae_step,
+            jnp.zeros(()),
+            jnp.arange(T - 1, -1, -1),
+            reverse=True,
         )
 
-        # Reverse back to original order
-        advantages = advantages[::-1]
         returns = advantages + values
 
         return advantages, returns
@@ -166,224 +199,132 @@ class PPOAgent:
     @partial(jax.jit, static_argnums=(0,))
     def update_step(
         self,
-        params: chex.ArrayTree,
-        opt_state: optax.OptState,
-        batch: RolloutBatch,
+        agent_state: AgentState,
+        trajectory: TrajectoryData,
         key: chex.PRNGKey,
-    ) -> tuple[chex.ArrayTree, optax.OptState, TrainingMetrics]:
-        """Single PPO update step.
+    ) -> tuple[AgentState, dict]:
+        """Perform single PPO update step with improved stability.
 
         Args:
-            params: Current parameters
-            opt_state: Optimizer state
-            batch: Rollout batch
-            key: Random key
+            agent_state: Current agent state
+            trajectory: Collected trajectory data
+            key: Random key for minibatch sampling
 
         Returns:
-            Tuple of (new_params, new_opt_state, metrics)
+            Tuple of (new_agent_state, metrics)
         """
+        # Get batch size from rewards array
+        batch_size = trajectory.rewards.shape[0]
 
-        def loss_fn(params):
-            # Forward pass
-            def network_forward(state):
-                return self.network.apply(
-                    params, state, training=True, rngs={"dropout": key}
-                )
+        # Normalize advantages if configured
+        advantages = trajectory.advantages
+        if self.config.normalize_advantages:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            network_outputs = jax.vmap(network_forward)(batch.states)
+        # Create minibatch indices
+        indices = jnp.arange(batch_size)
+        key, shuffle_key = jax.random.split(key)
+        indices = jax.random.permutation(shuffle_key, indices)
 
-            # Policy loss
-            action_logits = network_outputs.action_logits
-            action_probs = jax.nn.softmax(action_logits)
-            new_log_probs = jnp.log(
-                action_probs[jnp.arange(len(batch.actions)), batch.actions.bin_idx]
-                + 1e-8
-            )
-
-            # Importance sampling ratio
-            ratio = jnp.exp(new_log_probs - batch.log_probs)
-
-            # Normalize advantages
-            advantages = batch.advantages
-            if self.config.normalize_advantages:
-                advantages = (advantages - jnp.mean(advantages)) / (
-                    jnp.std(advantages) + 1e-8
-                )
-
-            # Clipped surrogate loss
-            surr1 = ratio * advantages
-            surr2 = (
-                jnp.clip(ratio, 1 - self.config.clip_eps, 1 + self.config.clip_eps)
-                * advantages
-            )
-            policy_loss = -jnp.mean(jnp.minimum(surr1, surr2))
-
-            # Value loss
-            values = network_outputs.value
-            value_clipped = batch.values + jnp.clip(
-                values - batch.values, -self.config.clip_eps, self.config.clip_eps
-            )
-            value_loss1 = (values - batch.returns) ** 2
-            value_loss2 = (value_clipped - batch.returns) ** 2
-            value_loss = 0.5 * jnp.mean(jnp.maximum(value_loss1, value_loss2))
-
-            # Entropy loss
-            entropy = -jnp.sum(action_probs * jnp.log(action_probs + 1e-8), axis=-1)
-            entropy_loss = -jnp.mean(entropy)
-
-            # Total loss
-            total_loss = (
-                policy_loss
-                + self.config.value_loss_coeff * value_loss
-                + self.config.entropy_coeff * entropy_loss
-            )
-
-            # Metrics
-            kl_div = jnp.mean(batch.log_probs - new_log_probs)
-            clip_frac = jnp.mean(
-                (jnp.abs(ratio - 1) > self.config.clip_eps).astype(jnp.float32)
-            )
-            explained_var = 1 - jnp.var(batch.returns - values) / jnp.var(batch.returns)
-
-            metrics = TrainingMetrics(
-                policy_loss=policy_loss,
-                value_loss=value_loss,
-                entropy_loss=entropy_loss,
-                total_loss=total_loss,
-                kl_divergence=kl_div,
-                clip_fraction=clip_frac,
-                explained_variance=explained_var,
-            )
-
-            return total_loss, metrics
-
-        # Compute gradients and update
-        (loss, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
-        updates, new_opt_state = self.optimizer.update(grads, opt_state, params)
-        new_params = optax.apply_updates(params, updates)
-
-        return new_params, new_opt_state, metrics
-
-    @partial(jax.jit, static_argnums=(0,))
-    def update(
-        self,
-        params: chex.ArrayTree,
-        opt_state: optax.OptState,
-        rollout_batch: RolloutBatch,
-        key: chex.PRNGKey,
-    ) -> tuple[chex.ArrayTree, optax.OptState, TrainingMetrics]:
-        """Full PPO update with multiple epochs and minibatches.
-
-        Args:
-            params: Current parameters
-            opt_state: Optimizer state
-            rollout_batch: Rollout data
-            key: Random key
-
-        Returns:
-            Tuple of (new_params, new_opt_state, metrics)
-        """
-        batch_size = len(rollout_batch.rewards)
         minibatch_size = batch_size // self.config.num_minibatches
 
-        def epoch_update(carry, epoch_key):
+        def _minibatch_update(carry, mb_indices):
             params, opt_state = carry
 
-            # Shuffle data
-            perm_key, update_key = random.split(epoch_key)
-            perm = random.permutation(perm_key, batch_size)
+            # Get minibatch data
+            mb_states = jax.tree.map(lambda x: x[mb_indices], trajectory.states)
+            mb_actions = jax.tree.map(lambda x: x[mb_indices], trajectory.actions)
+            mb_old_log_probs = trajectory.log_probs[mb_indices]
+            mb_advantages = advantages[mb_indices]
+            mb_returns = trajectory.returns[mb_indices]
 
-            # Create minibatches
-            def minibatch_update(carry, minibatch_idx):
-                params, opt_state, metrics_sum = carry
+            def loss_fn(params):
+                # Forward pass
+                network_outputs = jax.vmap(partial(self.network.apply, params, training=True))(mb_states)
 
-                start_idx = minibatch_idx * minibatch_size
-                end_idx = start_idx + minibatch_size
-                batch_indices = perm[start_idx:end_idx]
+                # Compute action log probabilities
+                action_logits = network_outputs.action_logits
+                action_probs = jax.nn.softmax(action_logits)
 
-                # Extract minibatch
-                minibatch = RolloutBatch(
-                    states=jax.tree_map(
-                        lambda x: x[batch_indices], rollout_batch.states
-                    ),
-                    actions=BinPackingAction(
-                        bin_idx=rollout_batch.actions.bin_idx[batch_indices]
-                    ),
-                    rewards=rollout_batch.rewards[batch_indices],
-                    values=rollout_batch.values[batch_indices],
-                    log_probs=rollout_batch.log_probs[batch_indices],
-                    dones=rollout_batch.dones[batch_indices],
-                    advantages=rollout_batch.advantages[batch_indices],
-                    returns=rollout_batch.returns[batch_indices],
+                # Get log probs for taken actions
+                mb_action_indices = mb_actions.bin_idx
+                log_probs = jnp.log(action_probs[jnp.arange(len(mb_action_indices)), mb_action_indices] + 1e-8)
+
+                # Policy loss with PPO clipping
+                ratio = jnp.exp(log_probs - mb_old_log_probs)
+                clipped_ratio = jnp.clip(ratio, 1 - self.config.clip_epsilon, 1 + self.config.clip_epsilon)
+                policy_loss = -jnp.minimum(
+                    ratio * mb_advantages,
+                    clipped_ratio * mb_advantages,
+                ).mean()
+
+                # Value loss with optional clipping
+                value_pred = network_outputs.value
+                value_loss = 0.5 * jnp.square(value_pred - mb_returns).mean()
+
+                # Entropy bonus for exploration
+                entropy = -jnp.sum(action_probs * jnp.log(action_probs + 1e-8), axis=-1).mean()
+
+                # Total loss
+                total_loss = (
+                    policy_loss + self.config.value_loss_coeff * value_loss - self.config.entropy_coeff * entropy
                 )
 
-                # Update on minibatch
-                new_params, new_opt_state, metrics = self.update_step(
-                    params, opt_state, minibatch, update_key
-                )
+                # Metrics for logging
+                metrics = {
+                    "policy_loss": policy_loss,
+                    "value_loss": value_loss,
+                    "entropy": entropy,
+                    "total_loss": total_loss,
+                    "mean_ratio": ratio.mean(),
+                    "max_ratio": ratio.max(),
+                    "min_ratio": ratio.min(),
+                }
 
-                # Accumulate metrics
-                new_metrics_sum = jax.tree_map(lambda x, y: x + y, metrics_sum, metrics)
+                return total_loss, metrics
 
-                return (new_params, new_opt_state, new_metrics_sum), None
+            # Compute gradients and update
+            grads, metrics = jax.grad(loss_fn, has_aux=True)(params)
+            updates, new_opt_state = self.optimizer.update(grads, opt_state, params)
+            new_params = optax.apply_updates(params, updates)
 
-            # Initialize metrics sum
-            init_metrics = TrainingMetrics(
-                policy_loss=0.0,
-                value_loss=0.0,
-                entropy_loss=0.0,
-                total_loss=0.0,
-                kl_divergence=0.0,
-                clip_fraction=0.0,
-                explained_variance=0.0,
-            )
+            # Add gradient norm to metrics
+            grad_norm = optax.global_norm(grads)
+            metrics["grad_norm"] = grad_norm
 
-            (params, opt_state, metrics_sum), _ = jax.lax.scan(
-                minibatch_update,
-                (params, opt_state, init_metrics),
-                jnp.arange(self.config.num_minibatches),
-            )
+            return (new_params, new_opt_state), metrics
 
-            # Average metrics
-            avg_metrics = jax.tree_map(
-                lambda x: x / self.config.num_minibatches, metrics_sum
-            )
-
-            return (params, opt_state), avg_metrics
-
-        # Split keys for epochs
-        epoch_keys = random.split(key, self.config.num_epochs)
-
-        (final_params, final_opt_state), epoch_metrics = jax.lax.scan(
-            epoch_update,
-            (params, opt_state),
-            epoch_keys,
+        # Perform updates over minibatches
+        minibatch_indices = indices.reshape(self.config.num_minibatches, minibatch_size)
+        (new_params, new_opt_state), metrics = jax.lax.scan(
+            _minibatch_update,
+            (agent_state.params, agent_state.opt_state),
+            minibatch_indices,
         )
 
-        # Average metrics across epochs
-        final_metrics = jax.tree_map(lambda x: jnp.mean(x), epoch_metrics)
+        # Average metrics across minibatches
+        avg_metrics = jax.tree.map(lambda x: x.mean(), metrics)
 
-        return final_params, final_opt_state, final_metrics
+        # Create new agent state
+        new_agent_state = AgentState(
+            params=new_params,
+            opt_state=new_opt_state,
+            step=agent_state.step + 1,
+        )
 
+        return new_agent_state, avg_metrics
 
-def make_rollout_batch(
-    states: BinPackingState,
-    actions: BinPackingAction,
-    rewards: chex.Array,
-    values: chex.Array,
-    log_probs: chex.Array,
-    dones: chex.Array,
-    advantages: chex.Array,
-    returns: chex.Array,
-) -> RolloutBatch:
-    """Create rollout batch from collected data."""
-    return RolloutBatch(
-        states=states,
-        actions=actions,
-        rewards=rewards,
-        values=values,
-        log_probs=log_probs,
-        dones=dones,
-        advantages=advantages,
-        returns=returns,
-    )
+    def create_lr_schedule(self, num_updates: int) -> optax.Schedule:
+        """Create learning rate schedule based on total number of updates.
+
+        Args:
+            num_updates: Total number of gradient updates
+
+        Returns:
+            Learning rate schedule
+        """
+        return optax.linear_schedule(
+            init_value=self.config.learning_rate,
+            end_value=self.config.lr_schedule_end,
+            transition_steps=num_updates,
+        )

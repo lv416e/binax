@@ -38,7 +38,7 @@ Thumbs.db
 .env.local
 .env.*.local
 
-# uv lock file conflicts
+# uv lock files
 uv.lock
 uv.lock.bak
 
@@ -49,3 +49,6 @@ multirun/
 
 # Wandb
 wandb/
+
+# Serena (AI assistant temporary files)
+.serena/

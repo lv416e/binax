@@ -99,7 +99,7 @@ def main():
 
     config = PPOConfig(
         learning_rate=3e-4,
-        clip_eps=0.2,
+        clip_epsilon=0.2,
         value_loss_coeff=0.5,
         entropy_coeff=0.01,
     )

@@ -58,6 +58,29 @@ class TrainingMetrics:
     explained_variance: chex.Scalar
 
 
+@chex.dataclass
+class AgentState:
+    """PPO agent state containing parameters and optimizer state."""
+
+    params: chex.ArrayTree
+    opt_state: chex.ArrayTree
+    step: chex.Scalar
+
+
+@chex.dataclass
+class TrajectoryData:
+    """Collected trajectory data for PPO training."""
+
+    states: BinPackingState
+    actions: BinPackingAction
+    rewards: chex.Array
+    values: chex.Array
+    log_probs: chex.Array
+    dones: chex.Array
+    advantages: chex.Array
+    returns: chex.Array
+
+
 class Environment(Protocol):
     """Protocol for bin packing environment."""
 
@@ -71,9 +94,7 @@ class Environment(Protocol):
         """Execute action and return next state, reward, done."""
         ...
 
-    def is_valid_action(
-        self, state: BinPackingState, action: BinPackingAction
-    ) -> chex.Scalar:
+    def is_valid_action(self, state: BinPackingState, action: BinPackingAction) -> chex.Scalar:
         """Check if action is valid in current state."""
         ...
 

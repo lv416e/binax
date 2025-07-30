@@ -27,7 +27,7 @@ class TestTrainingConfig:
         assert config.num_minibatches == 4
         assert config.gamma == 0.99
         assert config.gae_lambda == 0.95
-        assert config.clip_eps == 0.2
+        assert config.clip_epsilon == 0.2
 
         # Network settings
         assert config.network_type == "attention"
@@ -205,7 +205,7 @@ class TestTrainer:
         assert config.num_minibatches > 0
         assert 0 < config.gamma <= 1
         assert 0 <= config.gae_lambda <= 1
-        assert config.clip_eps > 0
+        assert config.clip_epsilon > 0
 
         # Network settings should be positive
         assert config.hidden_dim > 0

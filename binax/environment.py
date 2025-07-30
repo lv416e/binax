@@ -147,26 +147,40 @@ class BinPackingEnv:
         new_bin_utilization: chex.Array,
         done: chex.Scalar,
     ) -> chex.Scalar:
-        """Compute reward for the action taken."""
+        """Compute reward for the action taken.
+
+        Improved reward function with better balance:
+        - Reduced penalty for new bins to encourage necessary bin usage
+        - Increased completion bonus to emphasize overall efficiency
+        - Added efficiency bonus for high utilization bins
+        - Better balanced immediate vs long-term rewards
+        """
         # Base reward for placing item
         placement_reward = 1.0
 
-        # Penalty for opening new bin (when utilization was 0 before)
+        # Penalty for opening new bin (reduced from -5.0 to -2.0)
         bin_idx = action.bin_idx
         opened_new_bin = (state.bin_utilization[bin_idx] == 0) & (new_bin_utilization[bin_idx] > 0)
-        new_bin_penalty = -5.0 * opened_new_bin
+        new_bin_penalty = -2.0 * opened_new_bin
 
-        # Bonus for high utilization
-        utilization_bonus = 2.0 * new_bin_utilization[bin_idx]
+        # Bonus for high utilization (increased from 2.0 to 3.0)
+        utilization_bonus = 3.0 * new_bin_utilization[bin_idx]
 
-        # Final reward for completing episode
-        completion_reward = jnp.where(
-            done,
-            10.0 - 2.0 * jnp.sum(new_bin_utilization > 0),  # Fewer bins is better
+        # High efficiency bonus for bins over 80% full
+        high_efficiency_bonus = jnp.where(
+            new_bin_utilization[bin_idx] > 0.8,
+            2.0,
             0.0,
         )
 
-        return placement_reward + new_bin_penalty + utilization_bonus + completion_reward
+        # Final reward for completing episode (increased from 10.0 to 20.0)
+        completion_reward = jnp.where(
+            done,
+            20.0 - 2.0 * jnp.sum(new_bin_utilization > 0),  # Fewer bins is better
+            0.0,
+        )
+
+        return placement_reward + new_bin_penalty + utilization_bonus + high_efficiency_bonus + completion_reward
 
     def get_valid_actions(self, state: BinPackingState) -> chex.Array:
         """Get mask of valid actions for current state."""

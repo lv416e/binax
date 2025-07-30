@@ -34,7 +34,7 @@ class TrainingConfig:
         num_minibatches: int = 4,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
-        clip_eps: float = 0.2,
+        clip_epsilon: float = 0.2,
         entropy_coeff: float = 0.01,
         value_loss_coeff: float = 0.5,
         max_grad_norm: float = 0.5,
@@ -65,7 +65,7 @@ class TrainingConfig:
         self.num_minibatches = num_minibatches
         self.gamma = gamma
         self.gae_lambda = gae_lambda
-        self.clip_eps = clip_eps
+        self.clip_epsilon = clip_epsilon
         self.entropy_coeff = entropy_coeff
         self.value_loss_coeff = value_loss_coeff
         self.max_grad_norm = max_grad_norm
@@ -126,7 +126,7 @@ class Trainer:
             num_minibatches=config.num_minibatches,
             gamma=config.gamma,
             gae_lambda=config.gae_lambda,
-            clip_eps=config.clip_eps,
+            clip_epsilon=config.clip_epsilon,
             entropy_coeff=config.entropy_coeff,
             value_loss_coeff=config.value_loss_coeff,
             max_grad_norm=config.max_grad_norm,

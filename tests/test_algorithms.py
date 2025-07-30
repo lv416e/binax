@@ -6,7 +6,7 @@ import pytest
 
 from binax.algorithms import PPOAgent, PPOConfig, RolloutBatch, make_rollout_batch
 from binax.networks import SimplePolicyValueNetwork
-from binax.types import BinPackingAction, BinPackingState, TrainingMetrics
+from binax.types import BinPackingAction, BinPackingState, TrainingMetrics, TrajectoryData, AgentState
 
 
 class TestPPOConfig:
@@ -19,7 +19,7 @@ class TestPPOConfig:
         assert config.num_minibatches == 4
         assert config.gamma == 0.99
         assert config.gae_lambda == 0.95
-        assert config.clip_eps == 0.2
+        assert config.clip_epsilon == 0.2
         assert config.entropy_coeff == 0.01
         assert config.value_loss_coeff == 0.5
         assert config.max_grad_norm == 0.5
@@ -31,13 +31,13 @@ class TestPPOConfig:
             learning_rate=1e-3,
             num_epochs=8,
             gamma=0.95,
-            clip_eps=0.1,
+            clip_epsilon=0.1,
         )
 
         assert config.learning_rate == 1e-3
         assert config.num_epochs == 8
         assert config.gamma == 0.95
-        assert config.clip_eps == 0.1
+        assert config.clip_epsilon == 0.1
         # Other values should remain defaults
         assert config.gae_lambda == 0.95
         assert config.normalize_advantages is True
@@ -60,9 +60,17 @@ class TestRolloutBatch:
         advantages = jnp.ones(batch_size) * 0.5
         returns = jnp.ones(batch_size) * 2.5
 
-        batch = make_rollout_batch(
-            states, actions, rewards, values, log_probs, dones, advantages, returns
+        trajectory = TrajectoryData(
+            states=states,
+            actions=actions,
+            rewards=rewards,
+            values=values,
+            log_probs=log_probs,
+            dones=dones,
+            advantages=advantages,
+            returns=returns,
         )
+        batch = make_rollout_batch(trajectory)
 
         assert isinstance(batch, RolloutBatch)
         assert batch.rewards.shape == (batch_size,)
@@ -188,7 +196,7 @@ class TestPPOAgent:
         advantages = jnp.array([0.2, -0.1, 0.3, 0.1])
         returns = advantages + values
 
-        batch = RolloutBatch(
+        trajectory = TrajectoryData(
             states=states,
             actions=actions,
             rewards=rewards,
@@ -199,23 +207,28 @@ class TestPPOAgent:
             returns=returns,
         )
 
-        new_params, new_opt_state, metrics = agent.update_step(
-            params, opt_state, batch, rng_key
+        agent_state = AgentState(
+            params=params,
+            opt_state=opt_state,
+            step=0,
+        )
+
+        new_agent_state, metrics = agent.update_step(
+            agent_state, trajectory, rng_key
         )
 
         # Check outputs
-        assert isinstance(new_params, dict)
-        assert new_opt_state is not None
-        assert isinstance(metrics, TrainingMetrics)
+        assert isinstance(new_agent_state, AgentState)
+        assert isinstance(new_agent_state.params, dict)
+        assert new_agent_state.opt_state is not None
+        assert new_agent_state.step == 1
+        assert isinstance(metrics, dict)
 
         # Check metrics structure
-        assert hasattr(metrics, "policy_loss")
-        assert hasattr(metrics, "value_loss")
-        assert hasattr(metrics, "entropy_loss")
-        assert hasattr(metrics, "total_loss")
-        assert hasattr(metrics, "kl_divergence")
-        assert hasattr(metrics, "clip_fraction")
-        assert hasattr(metrics, "explained_variance")
+        assert "policy_loss" in metrics
+        assert "value_loss" in metrics
+        assert "entropy" in metrics
+        assert "total_loss" in metrics
 
     def test_full_update(self, agent, sample_state, rng_key):
         """Test full PPO update with multiple epochs and minibatches."""
@@ -250,7 +263,7 @@ class TestPPOAgent:
         actions = BinPackingAction(bin_idx=jnp.array([0, 1, 2, 0]))
         advantages = jnp.array([10.0, -5.0, 20.0, -15.0])  # Large variation
 
-        batch = RolloutBatch(
+        trajectory = TrajectoryData(
             states=states,
             actions=actions,
             rewards=jnp.ones(batch_size),
@@ -261,24 +274,27 @@ class TestPPOAgent:
             returns=advantages + jnp.ones(batch_size),
         )
 
+        agent_state_norm = AgentState(params=params, opt_state=opt_state_norm, step=0)
+        agent_state_no_norm = AgentState(params=params, opt_state=opt_state_no_norm, step=0)
+
         # Both should run without error
-        _, _, metrics_norm = agent_norm.update_step(params, opt_state_norm, batch, rng_key)
-        _, _, metrics_no_norm = agent_no_norm.update_step(params, opt_state_no_norm, batch, rng_key)
+        _, metrics_norm = agent_norm.update_step(agent_state_norm, trajectory, rng_key)
+        _, metrics_no_norm = agent_no_norm.update_step(agent_state_no_norm, trajectory, rng_key)
 
         # Both should produce valid metrics
-        assert not jnp.isnan(metrics_norm.policy_loss)
-        assert not jnp.isnan(metrics_no_norm.policy_loss)
+        assert not jnp.isnan(metrics_norm["policy_loss"])
+        assert not jnp.isnan(metrics_no_norm["policy_loss"])
 
     def test_config_parameters_affect_computation(self, sample_state, rng_key):
         """Test that different config parameters affect the computation."""
         network = SimplePolicyValueNetwork(hidden_dims=(32,), max_bins=5)
 
         # Test different clip epsilon values
-        agent1 = PPOAgent(network, PPOConfig(clip_eps=0.1), action_dim=6)
-        agent2 = PPOAgent(network, PPOConfig(clip_eps=0.3), action_dim=6)
+        agent1 = PPOAgent(network, PPOConfig(clip_epsilon=0.1), action_dim=6)
+        agent2 = PPOAgent(network, PPOConfig(clip_epsilon=0.3), action_dim=6)
 
         # This test demonstrates that the agents are configured differently
-        assert agent1.config.clip_eps != agent2.config.clip_eps
+        assert agent1.config.clip_epsilon != agent2.config.clip_epsilon
 
 
 # Separate test function to avoid NameError
@@ -296,7 +312,7 @@ def test_config_parameters_validation():
     assert 0 <= config.gae_lambda <= 1
 
     # Clip epsilon should be positive
-    assert config.clip_eps > 0
+    assert config.clip_epsilon > 0
 
     # Coefficient values should be non-negative
     assert config.entropy_coeff >= 0
@@ -328,9 +344,17 @@ def test_rollout_batch_consistency():
     advantages = jnp.array([0.2, -0.1, 0.3, 0.1, -0.05])
     returns = advantages + values
 
-    batch = make_rollout_batch(
-        states, actions, rewards, values, log_probs, dones, advantages, returns
+    trajectory = TrajectoryData(
+        states=states,
+        actions=actions,
+        rewards=rewards,
+        values=values,
+        log_probs=log_probs,
+        dones=dones,
+        advantages=advantages,
+        returns=returns,
     )
+    batch = make_rollout_batch(trajectory)
 
     # Check that all arrays have consistent batch size
     assert batch.rewards.shape[0] == batch_size

@@ -39,6 +39,7 @@ Thumbs.db
 .env.*.local
 
 # uv lock file conflicts
+uv.lock
 uv.lock.bak
 
 # Hydra

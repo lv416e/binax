@@ -42,18 +42,18 @@ def make_rollout_batch(trajectory: TrajectoryData) -> RolloutBatch:
 class PPOConfig:
     """PPO algorithm configuration."""
 
-    learning_rate: float = 3e-4
-    clip_epsilon: float = 0.2
+    learning_rate: float = 1e-4
+    clip_epsilon: float = 0.1
     value_loss_coeff: float = 0.5
-    entropy_coeff: float = 0.01
+    entropy_coeff: float = 0.05
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    num_epochs: int = 4
-    num_minibatches: int = 4
+    num_epochs: int = 8
+    num_minibatches: int = 8
     max_grad_norm: float = 0.5
     normalize_advantages: bool = True
     # New: learning rate scheduling
-    use_lr_schedule: bool = True
+    use_lr_schedule: bool = False
     lr_schedule_end: float = 1e-5
     total_timesteps: Optional[int] = None  # Required if use_lr_schedule is True
 

@@ -224,9 +224,9 @@ class ResidualBlock(nn.Module):
 class SimplePolicyValueNetwork(nn.Module):
     """Simpler policy-value network without attention for baseline."""
 
-    hidden_dims: Sequence[int] = (512, 256, 128)
+    hidden_dims: Sequence[int] = (128, 64, 32)
     max_bins: int = 50
-    dropout_rate: float = 0.1
+    dropout_rate: float = 0.0
 
     def setup(self) -> None:
         # Shared layers

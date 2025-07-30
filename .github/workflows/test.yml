@@ -1,4 +1,4 @@
-name: Tests
+name: CI
 
 on:
   push:
@@ -7,12 +7,38 @@ on:
     branches: [ main, develop ]
 
 jobs:
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Run type checking
+      run: uv run mypy binax --ignore-missing-imports
+
+    - name: Run linting
+      run: uv run ruff check binax
+
+    - name: Run formatting check
+      run: uv run ruff format --check binax
+
   test:
+    name: Unit Tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.12"]
-
     steps:
     - uses: actions/checkout@v4
 
@@ -25,28 +51,13 @@ jobs:
       run: uv python install ${{ matrix.python-version }}
 
     - name: Install dependencies
-      run: |
-        uv sync --dev
-
-    - name: Run type checking
-      run: |
-        uv run mypy binax --ignore-missing-imports
-
-    - name: Run linting
-      run: |
-        uv run ruff check binax
-
-    - name: Run formatting check
-      run: |
-        uv run ruff format --check binax
+      run: uv sync --dev
 
     - name: Run tests
-      run: |
-        uv run pytest tests/ -v --tb=short
+      run: uv run pytest tests/ -v --tb=short
 
     - name: Run tests with coverage
-      run: |
-        uv run pytest tests/ --cov=binax --cov-report=xml --cov-report=term-missing
+      run: uv run pytest tests/ --cov=binax --cov-report=xml --cov-report=term-missing
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4

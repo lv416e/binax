@@ -1,8 +1,7 @@
 """PPO algorithm implementation for bin packing reinforcement learning."""
 
-from collections.abc import Callable
 from functools import partial
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import chex
 import jax
@@ -46,7 +45,7 @@ class PPOAgent:
 
     def __init__(
         self,
-        network: Callable,
+        network: Any,  # Flax module
         config: PPOConfig = PPOConfig(),
         action_dim: int = 51,  # max_bins + 1
     ) -> None:
@@ -133,7 +132,9 @@ class PPOAgent:
             Tuple of (advantages, returns)
         """
 
-        def gae_step(carry, transition):
+        def gae_step(
+            carry: tuple[float, float], transition: tuple[float, float, float]
+        ) -> tuple[tuple[float, float], float]:
             gae, next_value = carry
             reward, value, done = transition
 
@@ -181,9 +182,9 @@ class PPOAgent:
             Tuple of (new_params, new_opt_state, metrics)
         """
 
-        def loss_fn(params):
+        def loss_fn(params: chex.ArrayTree) -> tuple[chex.Scalar, TrainingMetrics]:
             # Forward pass
-            def network_forward(state):
+            def network_forward(state: BinPackingState) -> Any:
                 return self.network.apply(params, state, training=True, rngs={"dropout": key})
 
             network_outputs = jax.vmap(network_forward)(batch.states)
@@ -268,7 +269,9 @@ class PPOAgent:
         batch_size = len(rollout_batch.rewards)
         minibatch_size = batch_size // self.config.num_minibatches
 
-        def epoch_update(carry, epoch_key):
+        def epoch_update(
+            carry: tuple[chex.ArrayTree, optax.OptState], epoch_key: chex.PRNGKey
+        ) -> tuple[tuple[chex.ArrayTree, optax.OptState], TrainingMetrics]:
             params, opt_state = carry
 
             # Shuffle data
@@ -276,7 +279,9 @@ class PPOAgent:
             perm = random.permutation(perm_key, batch_size)
 
             # Create minibatches
-            def minibatch_update(carry, minibatch_idx):
+            def minibatch_update(
+                carry: tuple[chex.ArrayTree, optax.OptState, TrainingMetrics], minibatch_idx: int
+            ) -> tuple[tuple[chex.ArrayTree, optax.OptState, TrainingMetrics], None]:
                 params, opt_state, metrics_sum = carry
 
                 start_idx = minibatch_idx * minibatch_size

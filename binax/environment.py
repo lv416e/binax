@@ -1,5 +1,7 @@
 """JAX-based bin packing environment implementation."""
 
+from typing import Callable, Optional
+
 import chex
 import jax
 import jax.numpy as jnp
@@ -31,7 +33,7 @@ class BinPackingEnv:
         self.max_items = max_items
         self.item_size_range = item_size_range
 
-    def reset(self, key: chex.PRNGKey, num_items: int = None) -> BinPackingState:
+    def reset(self, key: chex.PRNGKey, num_items: Optional[int] = None) -> BinPackingState:
         """Reset environment to initial state.
 
         Args:
@@ -75,7 +77,7 @@ class BinPackingEnv:
         state: BinPackingState,
         action: BinPackingAction,
         key: chex.PRNGKey,
-    ) -> tuple[BinPackingState, chex.Scalar, chex.Scalar]:
+    ) -> tuple[BinPackingState, chex.Scalar, chex.Array]:
         """Execute action and return next state, reward, done.
 
         Args:
@@ -93,12 +95,8 @@ class BinPackingEnv:
         valid_action = self._is_valid_action(state, action)
 
         # Update bin capacities and utilization
-        new_bin_capacities = state.bin_capacities.at[bin_idx].add(
-            -current_item_size * valid_action
-        )
-        new_bin_utilization = self._compute_bin_utilization(
-            new_bin_capacities, self.bin_capacity
-        )
+        new_bin_capacities = state.bin_capacities.at[bin_idx].add(-current_item_size * valid_action)
+        new_bin_utilization = self._compute_bin_utilization(new_bin_capacities, self.bin_capacity)
 
         # Move to next item
         next_item_idx = state.current_item_idx + 1
@@ -121,9 +119,7 @@ class BinPackingEnv:
 
         return next_state, reward, done
 
-    def _is_valid_action(
-        self, state: BinPackingState, action: BinPackingAction
-    ) -> chex.Scalar:
+    def _is_valid_action(self, state: BinPackingState, action: BinPackingAction) -> chex.Scalar:
         """Check if action is valid in current state."""
         current_item_size = state.item_queue[state.current_item_idx]
         bin_idx = action.bin_idx
@@ -139,9 +135,7 @@ class BinPackingEnv:
 
         return valid_bin_idx & sufficient_capacity & item_exists
 
-    def _compute_bin_utilization(
-        self, bin_capacities: chex.Array, bin_capacity: float
-    ) -> chex.Array:
+    def _compute_bin_utilization(self, bin_capacities: chex.Array, bin_capacity: float) -> chex.Array:
         """Compute utilization ratio for each bin."""
         used_capacity = bin_capacity - bin_capacities
         return used_capacity / bin_capacity
@@ -159,9 +153,7 @@ class BinPackingEnv:
 
         # Penalty for opening new bin (when utilization was 0 before)
         bin_idx = action.bin_idx
-        opened_new_bin = (state.bin_utilization[bin_idx] == 0) & (
-            new_bin_utilization[bin_idx] > 0
-        )
+        opened_new_bin = (state.bin_utilization[bin_idx] == 0) & (new_bin_utilization[bin_idx] > 0)
         new_bin_penalty = -5.0 * opened_new_bin
 
         # Bonus for high utilization
@@ -174,9 +166,7 @@ class BinPackingEnv:
             0.0,
         )
 
-        return (
-            placement_reward + new_bin_penalty + utilization_bonus + completion_reward
-        )
+        return placement_reward + new_bin_penalty + utilization_bonus + completion_reward
 
     def get_valid_actions(self, state: BinPackingState) -> chex.Array:
         """Get mask of valid actions for current state."""
@@ -211,9 +201,7 @@ class BinPackingEnv:
         ):
             if used:
                 used_capacity = self.bin_capacity - capacity
-                lines.append(
-                    f"Bin {i}: {used_capacity:.3f}/{self.bin_capacity:.3f} ({util:.1%} full)"
-                )
+                lines.append(f"Bin {i}: {used_capacity:.3f}/{self.bin_capacity:.3f} ({util:.1%} full)")
 
         # Show remaining items
         remaining_items = state.item_queue[state.current_item_idx + 1 :]
@@ -227,9 +215,7 @@ class BinPackingEnv:
 
 
 # Vectorized environment for parallel training
-def make_vectorized_env(
-    env_params: dict, num_envs: int
-) -> tuple[callable, callable, callable]:
+def make_vectorized_env(env_params: dict, num_envs: int) -> tuple[Callable, Callable, Callable]:
     """Create vectorized environment functions.
 
     Args:

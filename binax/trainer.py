@@ -1,6 +1,7 @@
 """Training loop and experience collection for bin packing RL."""
 
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -134,7 +135,12 @@ class Trainer:
 
         # Initialize parameters
         self.key, init_key = random.split(self.key)
-        dummy_env = BinPackingEnv(**env_params)
+        dummy_env = BinPackingEnv(
+            bin_capacity=float(env_params["bin_capacity"]),
+            max_bins=int(env_params["max_bins"]),
+            max_items=int(env_params["max_items"]),
+            item_size_range=tuple(env_params["item_size_range"]),
+        )
         dummy_state = dummy_env.reset(init_key)
 
         self.key, param_key = random.split(self.key)
@@ -181,7 +187,9 @@ class Trainer:
             action_keys = jnp.array(action_keys)
 
             # Vectorized action selection
-            def select_action_single(state, valid_action_mask, key):
+            def select_action_single(
+                state: BinPackingState, valid_action_mask: Any, key: Any
+            ) -> tuple[BinPackingAction, Any, Any]:
                 return self.agent.select_action(self.params, state, key, valid_action_mask)
 
             actions, log_probs, values = jax.vmap(select_action_single)(current_states, valid_actions, action_keys)
@@ -230,7 +238,7 @@ class Trainer:
         dones = jnp.stack(done_history)
 
         # Compute advantages and returns using GAE
-        def compute_gae_single(rewards_seq, values_seq, dones_seq, next_value):
+        def compute_gae_single(rewards_seq: Any, values_seq: Any, dones_seq: Any, next_value: Any) -> tuple[Any, Any]:
             return self.agent.compute_gae(rewards_seq, values_seq, dones_seq, next_value)
 
         advantages, returns = jax.vmap(compute_gae_single, in_axes=(1, 1, 1, 0))(rewards, values, dones, next_values)
